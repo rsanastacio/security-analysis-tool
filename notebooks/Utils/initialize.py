@@ -169,6 +169,13 @@ if cloud_type == "aws":
 
 # COMMAND ----------
 
+# DBTITLE 1,Nominal user auth (no service principal)
+if "use-user-auth" in [s.key for s in dbutils.secrets.list(SECRETS_SCOPE)]:
+    use_user_auth = dbutils.secrets.get(scope=SECRETS_SCOPE, key="use-user-auth").lower() == "true"
+    json_.update({"use_user_auth": str(use_user_auth)})
+    if use_user_auth:
+        print("Auth mode: nominal user (run_as identity for workspace APIs, U2M refresh token for account APIs)")
+
 # COMMAND ----------
 
 

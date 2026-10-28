@@ -5,15 +5,22 @@ import subprocess
 
 from databricks.sdk import WorkspaceClient
 from inquirer import Confirm, List, Password, Text, list_input, prompt
+from databricks.sdk.core import Config
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from sat.utils import (
+    cloud_type,
     cloud_validation,
+    get_account_profiles,
     get_catalogs,
     get_profiles,
     get_warehouses,
     loading,
+    read_user_refresh_token,
     uc_enabled,
 )
+
+USER_OAUTH_CLIENT_ID = "databricks-cli"
+UNUSED_SP_PLACEHOLDER = "unused-user-auth"
 
 
 def form():
@@ -49,6 +56,20 @@ def form():
             name="warehouse",
             message="Select warehouse",
             choices=loading(get_warehouses, client=client),
+        ),
+    ]
+    user_auth = [
+        Confirm(
+            name="use_user_auth",
+            message="Authenticate as your nominal user instead of a service principal? [AWS/GCP, serverless only]",
+            default=False,
+            ignore=cloud_type(client) == "azure",
+        ),
+        List(
+            name="account_profile",
+            message="Select account-level CLI profile (databricks auth login --account-id ...)",
+            choices=lambda _: loading(get_account_profiles, "Loading account profiles..."),
+            ignore=lambda x: not x.get("use_user_auth"),
         ),
     ]
     proxies = [
@@ -96,17 +117,24 @@ def form():
             name="enable_brickhound",
             message="Deploy Permissions Analysis?",
             default=True,
+            # BrickHound authenticates with its own SP-based SDK client.
+            ignore=lambda x: x.get("use_user_auth"),
         ),
         Text(
             name="brickhound_schedule",
             message="Permissions Analysis schedule (Quartz cron expression)",
             default="0 0 2 ? * *",
-            ignore=lambda x: not x.get("enable_brickhound", False),
+            ignore=lambda x: not x.get("enable_brickhound", False) or x.get("use_user_auth"),
         ),
     ]
 
-    questions = questions + cloud_specific_questions(client) + proxies + scheduling + brickhound
-    return client, prompt(questions), profile
+    questions = questions + user_auth + cloud_specific_questions(client) + proxies + scheduling + brickhound
+    answers = prompt(questions)
+    if answers.get("use_user_auth"):
+        if not answers["enable_serverless"]:
+            raise ValueError("Nominal user auth requires serverless: the run_as token only reaches the current workspace.")
+        answers["enable_brickhound"] = False
+    return client, answers, profile
 
 
 def cloud_specific_questions(client: WorkspaceClient):
@@ -137,12 +165,12 @@ def cloud_specific_questions(client: WorkspaceClient):
         Text(
             name="gcp-client-id",
             message="Client ID",
-            ignore=cloud_validation(client, "gcp"),
+            ignore=lambda x, skip=cloud_validation(client, "gcp"): skip or x.get("use_user_auth"),
         ),
         Password(
             name="gcp-client-secret",
             message="Client Secret",
-            ignore=cloud_validation(client, "gcp"),
+            ignore=lambda x, skip=cloud_validation(client, "gcp"): skip or x.get("use_user_auth"),
             echo="",
         ),
     ]
@@ -150,12 +178,12 @@ def cloud_specific_questions(client: WorkspaceClient):
         Text(
             name="aws-client-id",
             message="Client ID",
-            ignore=cloud_validation(client, "aws"),
+            ignore=lambda x, skip=cloud_validation(client, "aws"): skip or x.get("use_user_auth"),
         ),
         Password(
             name="aws-client-secret",
             message="Client Secret",
-            ignore=cloud_validation(client, "aws"),
+            ignore=lambda x, skip=cloud_validation(client, "aws"): skip or x.get("use_user_auth"),
             echo="",
         ),
     ]
@@ -210,6 +238,10 @@ def generate_secrets(client: WorkspaceClient, answers: dict, cloud_type: str):
             string_value="{}",
         )
 
+    if answers.get("use_user_auth"):
+        generate_user_auth_secrets(client, answers, scope_name)
+        return
+
     if cloud_type == "aws" or cloud_type == "gcp":
         client.secrets.put_secret(
             scope=scope_name,
@@ -224,3 +256,22 @@ def generate_secrets(client: WorkspaceClient, answers: dict, cloud_type: str):
                 key=value.replace(f"{cloud_type}-", ""),
                 string_value=answers[value],
             )
+
+
+def generate_user_auth_secrets(client: WorkspaceClient, answers: dict, scope_name: str):
+    profile_account_id = Config(profile=answers["account_profile"]).account_id
+    if profile_account_id != answers["account_id"]:
+        raise ValueError(
+            f"Profile '{answers['account_profile']}' points to account {profile_account_id}, not {answers['account_id']}."
+        )
+    secrets = {
+        "use-user-auth": "true",
+        "use-sp-auth": "false",
+        "user-oauth-client-id": USER_OAUTH_CLIENT_ID,
+        "account-refresh-token": read_user_refresh_token(answers["account_profile"], answers["account_id"]),
+        # Notebooks still read these keys unconditionally.
+        "client-id": UNUSED_SP_PLACEHOLDER,
+        "client-secret": UNUSED_SP_PLACEHOLDER,
+    }
+    for key, value in secrets.items():
+        client.secrets.put_secret(scope=scope_name, key=key, string_value=value)

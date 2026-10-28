@@ -6,6 +6,7 @@ import requests
 from core.logging_utils import LoggingUtils
 from core import parser as pars
 import re
+import threading
 from enum import Enum
 
 urllib3.disable_warnings(category = urllib3.exceptions.InsecureRequestWarning)
@@ -14,6 +15,12 @@ LOGGR=None
 
 if LOGGR is None:
     LOGGR = LoggingUtils.get_logger()
+
+# Process-wide cache so parallel workspace runs share one refresh exchange per access-token lifetime.
+_USER_ACCT_TOKEN = {"access_token": None, "expiry": 0.0}
+_USER_ACCT_LOCK = threading.Lock()
+USER_REFRESH_TOKEN_KEY = "account-refresh-token"
+USER_OAUTH_CLIENT_ID_KEY = "user-oauth-client-id"
 
 class PatternType(Enum):
     PATTERN_1 = 1  # dict with 1 list of dicts
@@ -53,6 +60,11 @@ class SatDBClient:
         #Azure pass in secret generated in azure portal
         self._client_id = configs['client_id'].strip()
         self._client_secret = configs['client_secret'].strip()
+        # Nominal-user mode: workspace calls use the job run_as identity, account calls use the user's U2M refresh token.
+        self._use_user_auth = str(configs.get('use_user_auth', 'False')).lower() == 'true'
+        self._secrets_scope = configs.get('master_name_scope', 'sat_scope')
+        if self._use_user_auth and 'azure' in self._cloud_type:
+            raise Exception("use_user_auth is not supported on Azure: Azure Management API calls require an Entra ID service principal")
 
         # Check if accounts_console URL is explicitly provided
         # (required for staging, DoD, and other non-standard environments)
@@ -83,7 +95,13 @@ class SatDBClient:
         '''endpoint passed for azure since some go to accounts and some to azure mgmt'''
         LOGGR.info("in _update_token_master")
         #self._url=self._raw_url
-        if(self._cloud_type == 'gcp'):
+        if self._use_user_auth:
+            self._url = self._ACCTURL
+            self._token = {
+                "Authorization": f"Bearer {self._get_user_account_token()}",
+                "User-Agent": "databricks-sat/0.1.0"
+            }
+        elif(self._cloud_type == 'gcp'):
             self._url=self._ACCTURL
             oauth = self.getGCPTokenwithOAuth(True, self._client_id, self._client_secret)
             self._token = {
@@ -117,7 +135,9 @@ class SatDBClient:
         #self._url=self._raw_url #accounts api uses a different url
         LOGGR.info("in _update_token")
         self._url=self._raw_url
-        if self._cloud_type == 'aws':
+        if self._use_user_auth:
+            self._token = self._get_user_workspace_headers()
+        elif self._cloud_type == 'aws':
             oauth = self.getAWSTokenwithOAuth(False, self._client_id, self._client_secret)
             self._token = {
                 "Authorization": f"Bearer {oauth}",
@@ -138,6 +158,44 @@ class SatDBClient:
         LOGGR.info(f'Token Updated!')
 
 
+
+    def _get_user_workspace_headers(self):
+        '''auth headers of the notebook run_as identity; only valid for the current workspace'''
+        from databricks.sdk import WorkspaceClient  # lazy import — only needed in user auth mode
+        wsclient = WorkspaceClient()
+        if wsclient.config.host.rstrip('/') != self._raw_url.rstrip('/'):
+            raise Exception(f"use_user_auth only analyzes the current workspace ({wsclient.config.host}); got {self._raw_url}. Run on serverless.")
+        headers = dict(wsclient.config.authenticate())
+        headers["User-Agent"] = "databricks-sat/0.1.0"
+        return headers
+
+    def _get_user_account_token(self):
+        '''exchange the stored U2M refresh token for an account access token'''
+        # docs: https://docs.databricks.com/aws/en/dev-tools/auth/oauth-u2m
+        from databricks.sdk import WorkspaceClient  # lazy import — only needed in user auth mode
+        with _USER_ACCT_LOCK:
+            if _USER_ACCT_TOKEN["access_token"] and _USER_ACCT_TOKEN["expiry"] - 300 > time.time():
+                return _USER_ACCT_TOKEN["access_token"]
+            wsclient = WorkspaceClient()
+            refresh_token = wsclient.dbutils.secrets.get(self._secrets_scope, USER_REFRESH_TOKEN_KEY)
+            client_id = wsclient.dbutils.secrets.get(self._secrets_scope, USER_OAUTH_CLIENT_ID_KEY)
+            response = requests.post(f"{self._ACCTURL}/oidc/accounts/{self._account_id}/v1/token",
+                                     headers={"User-Agent": "databricks-sat/0.1.0"},
+                                     data={"grant_type": "refresh_token", "refresh_token": refresh_token, "client_id": client_id},
+                                     timeout=60, proxies=self._proxies)
+            if response.status_code != 200:
+                LOGGR.error(f"User account token refresh failed (status {response.status_code}): {response.text}")
+                raise Exception(f"Failed to refresh user account token (status {response.status_code}). "
+                                f"Re-run 'python dabs/refresh_user_token.py' after 'databricks auth login'.--{response.text}")
+            body = response.json()
+            new_refresh_token = body.get("refresh_token")
+            # Persist rotated tokens so the next run does not reuse a revoked one.
+            if new_refresh_token and new_refresh_token != refresh_token:
+                wsclient.secrets.put_secret(scope=self._secrets_scope, key=USER_REFRESH_TOKEN_KEY, string_value=new_refresh_token)
+                LOGGR.info("Rotated user refresh token persisted to secret scope")
+            _USER_ACCT_TOKEN["access_token"] = body["access_token"]
+            _USER_ACCT_TOKEN["expiry"] = time.time() + int(body.get("expires_in", 3600))
+            return _USER_ACCT_TOKEN["access_token"]
 
     def get_temporary_oauth_token(self):
         self._update_token()

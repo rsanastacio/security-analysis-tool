@@ -90,3 +90,26 @@ def uc_enabled(client: WorkspaceClient):
         return True
     except:
         return False
+
+
+def get_account_profiles():
+    output = databricks_command("databricks auth profiles -o json")["profiles"]
+    return [p["name"] for p in output if p["valid"] and "accounts" in p["host"]]
+
+
+def read_user_refresh_token(profile: str, account_id: str):
+    """Read the U2M refresh token cached by `databricks auth login` for an account profile."""
+    # Force a refresh so the cached refresh token is the newest one.
+    subprocess.run(["databricks", "auth", "token", "-p", profile], capture_output=True, text=True, check=True)
+    cache_path = os.path.expanduser("~/.databricks/token-cache.json")
+    if not os.path.exists(cache_path):
+        raise RuntimeError(
+            f"{cache_path} not found. Set 'auth_storage = plaintext' under [__settings__] in ~/.databrickscfg "
+            f"and run 'databricks auth login -p {profile}' again."
+        )
+    with open(cache_path) as fp:
+        tokens = json.load(fp)["tokens"]
+    for key, value in tokens.items():
+        if (key == profile or key.endswith(f"/oidc/accounts/{account_id}")) and value.get("refresh_token"):
+            return value["refresh_token"]
+    raise RuntimeError(f"No refresh token cached for profile '{profile}' / account {account_id}.")
