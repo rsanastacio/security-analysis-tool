@@ -15,7 +15,12 @@ cd $project
 # not yet created) or when BrickHound is disabled (resource key absent).
 databricks bundle deployment bind sat_permissions_analysis sat-permissions-exp -p $profile --auto-approve 2>/dev/null || true
 databricks bundle deploy -p $profile --force-lock
+deploy_status=$?
 cd ../
 rm -rf $project
 rm -rf ./dabs_template/template/tmp/configs ./dabs_template/template/tmp/dashboards ./dabs_template/template/tmp/notebooks ./dabs_template/template/tmp/app ./dabs_template/template/tmp/lib
+if [ $deploy_status -ne 0 ]; then
+    echo "Bundle deploy failed (exit $deploy_status). Jobs and dashboards were NOT deployed."
+    exit $deploy_status
+fi
 echo "Run 'databricks apps deploy sat-permissions-exp --source-code-path /Workspace/Applications/SAT/files/app/brickhound' to deploy the Permission app to your Databricks workspace."
