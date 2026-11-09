@@ -36,7 +36,8 @@ def run_notebook(notebook_path, timeout):
     status = dbutils.notebook.run(notebook_path, timeout)
     if status != "OK":
         loggr.exception(f"Error Encountered in {notebook_path}", status)
-        dbutils.notebook.exit()
+        # Fail the run: exit() here left the job green with later steps (e.g. dashboard import) skipped.
+        raise Exception(f"{notebook_path} returned {status!r}")
 
 # COMMAND ----------
 
