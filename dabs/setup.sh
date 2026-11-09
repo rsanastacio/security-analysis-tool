@@ -3,6 +3,7 @@
 project=$1
 profile=$2
 config_file=$3
+enable_brickhound=$4
 
 
 cp -r ../configs ../notebooks ../dashboards ../app ../lib ./dabs_template/template/tmp
@@ -23,4 +24,6 @@ if [ $deploy_status -ne 0 ]; then
     echo "Bundle deploy failed (exit $deploy_status). Jobs and dashboards were NOT deployed."
     exit $deploy_status
 fi
-echo "Run 'databricks apps deploy sat-permissions-exp --source-code-path /Workspace/Applications/SAT/files/app/brickhound' to deploy the Permission app to your Databricks workspace."
+if [ "$enable_brickhound" = "True" ]; then
+    echo "Run 'databricks apps deploy sat-permissions-exp --source-code-path /Workspace/Applications/SAT/files/app/brickhound' to deploy the Permission app to your Databricks workspace."
+fi

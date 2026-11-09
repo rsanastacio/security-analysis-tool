@@ -39,7 +39,7 @@ def install(client: WorkspaceClient, answers: dict, profile: str):
         json.dump(config, fp)
 
     os.system("clear")
-    deploy_status = subprocess.call(f"sh ./setup.sh tmp {profile} {config_file}".split(" "))
+    deploy_status = subprocess.call(f"sh ./setup.sh tmp {profile} {config_file} {config['enable_brickhound']}".split(" "))
     if deploy_status != 0:
         raise RuntimeError(f"setup.sh failed with exit code {deploy_status}; fix the error above and re-run install.sh")
     print("Installation complete.")
