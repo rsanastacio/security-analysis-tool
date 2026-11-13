@@ -160,12 +160,15 @@ class SatDBClient:
 
 
     def _get_user_workspace_headers(self):
-        '''auth headers of the notebook run_as identity; only valid for the current workspace'''
+        '''auth headers for workspace APIs: run_as identity on the current workspace, account-level U2M token elsewhere'''
         from databricks.sdk import WorkspaceClient  # lazy import — only needed in user auth mode
         wsclient = WorkspaceClient()
-        if wsclient.config.host.rstrip('/') != self._raw_url.rstrip('/'):
-            raise Exception(f"use_user_auth only analyzes the current workspace ({wsclient.config.host}); got {self._raw_url}. Run on serverless.")
-        headers = dict(wsclient.config.authenticate())
+        if wsclient.config.host.rstrip('/') == self._raw_url.rstrip('/'):
+            headers = dict(wsclient.config.authenticate())
+        else:
+            # Account-level U2M tokens also authorize workspace APIs on every workspace the user can access.
+            # docs: https://docs.databricks.com/aws/en/dev-tools/auth/oauth-u2m
+            headers = {"Authorization": f"Bearer {self._get_user_account_token()}"}
         headers["User-Agent"] = "databricks-sat/0.1.0"
         return headers
 

@@ -61,7 +61,7 @@ def form():
     user_auth = [
         Confirm(
             name="use_user_auth",
-            message="Authenticate as your nominal user instead of a service principal? [AWS/GCP, serverless only]",
+            message="Authenticate as your nominal user instead of a service principal? [AWS/GCP]",
             default=False,
             ignore=cloud_type(client) == "azure",
         ),
@@ -131,8 +131,6 @@ def form():
     questions = questions + user_auth + cloud_specific_questions(client) + proxies + scheduling + brickhound
     answers = prompt(questions)
     if answers.get("use_user_auth"):
-        if not answers["enable_serverless"]:
-            raise ValueError("Nominal user auth requires serverless: the run_as token only reaches the current workspace.")
         answers["enable_brickhound"] = False
     return client, answers, profile
 
