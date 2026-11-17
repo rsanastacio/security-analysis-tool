@@ -5,13 +5,13 @@ import subprocess
 
 from databricks.sdk import WorkspaceClient
 from inquirer import Confirm, List, Password, Text, list_input, prompt
-from databricks.sdk.core import Config
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from sat.utils import (
     cloud_type,
     cloud_validation,
     get_account_profiles,
     get_catalogs,
+    get_profile_account_id,
     get_profiles,
     get_warehouses,
     loading,
@@ -257,7 +257,7 @@ def generate_secrets(client: WorkspaceClient, answers: dict, cloud_type: str):
 
 
 def generate_user_auth_secrets(client: WorkspaceClient, answers: dict, scope_name: str):
-    profile_account_id = Config(profile=answers["account_profile"]).account_id
+    profile_account_id = get_profile_account_id(answers["account_profile"])
     if profile_account_id != answers["account_id"]:
         raise ValueError(
             f"Profile '{answers['account_profile']}' points to account {profile_account_id}, not {answers['account_id']}."

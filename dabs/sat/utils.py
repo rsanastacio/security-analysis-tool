@@ -97,6 +97,21 @@ def get_account_profiles():
     return [p["name"] for p in output if p["valid"] and "accounts" in p["host"]]
 
 
+def get_profile_account_id(profile: str):
+    """Read account_id from ~/.databrickscfg without authenticating.
+
+    Config(profile=...) authenticates on init, and the CLI token lookup fails when
+    two profiles share the same accounts host.
+    """
+    import configparser
+
+    parser = configparser.ConfigParser()
+    parser.read(os.environ.get("DATABRICKS_CONFIG_FILE", os.path.expanduser("~/.databrickscfg")))
+    if not parser.has_option(profile, "account_id"):
+        raise RuntimeError(f"Profile '{profile}' has no account_id in ~/.databrickscfg.")
+    return parser.get(profile, "account_id").strip()
+
+
 def read_user_refresh_token(profile: str, account_id: str):
     """Read the U2M refresh token cached by `databricks auth login` for an account profile."""
     # Force a refresh so the cached refresh token is the newest one.
@@ -109,7 +124,8 @@ def read_user_refresh_token(profile: str, account_id: str):
         )
     with open(cache_path) as fp:
         tokens = json.load(fp)["tokens"]
-    for key, value in tokens.items():
-        if (key == profile or key.endswith(f"/oidc/accounts/{account_id}")) and value.get("refresh_token"):
-            return value["refresh_token"]
+    # Prefer the profile-named entry: host-keyed entries are shared by every profile on the same account.
+    for key in [profile] + [k for k in tokens if k.endswith(f"/oidc/accounts/{account_id}")]:
+        if tokens.get(key, {}).get("refresh_token"):
+            return tokens[key]["refresh_token"]
     raise RuntimeError(f"No refresh token cached for profile '{profile}' / account {account_id}.")

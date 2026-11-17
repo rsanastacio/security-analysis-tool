@@ -2,9 +2,8 @@
 import argparse
 
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.core import Config
 from sat.config import USER_OAUTH_CLIENT_ID
-from sat.utils import read_user_refresh_token
+from sat.utils import get_profile_account_id, read_user_refresh_token
 
 SCOPE_NAME = "sat_scope"
 
@@ -15,7 +14,7 @@ def main():
     parser.add_argument("--account-profile", required=True, help="Account-level CLI profile of the same user")
     args = parser.parse_args()
 
-    account_id = Config(profile=args.account_profile).account_id
+    account_id = get_profile_account_id(args.account_profile)
     client = WorkspaceClient(profile=args.workspace_profile)
     client.secrets.put_secret(
         scope=SCOPE_NAME,
