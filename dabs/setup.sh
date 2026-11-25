@@ -5,6 +5,8 @@ profile=$2
 config_file=$3
 enable_brickhound=$4
 
+# Ship TruffleHog with the bundle so the secrets scanner works without GitHub egress from the cluster.
+bash ./fetch_trufflehog.sh || echo "WARNING: TruffleHog download failed; the secrets scanner will try GitHub at runtime."
 
 cp -r ../configs ../notebooks ../dashboards ../app ../lib ./dabs_template/template/tmp
 

@@ -60,4 +60,9 @@ if is_serverless:
     # Install the SDK wheel only, with --no-deps to avoid any PyPI resolution.
     subprocess.run([sys.executable, "-m", "pip", "install", "--no-deps", WHEEL_PATH], check=True)
 else:
-    subprocess.run([sys.executable, "-m", "pip", "install", "PyYAML", WHEEL_PATH], check=True)
+    # Classic: requests and PyYAML ship with DBR; --no-deps keeps clusters without PyPI access (proxy/SSL inspection) working.
+    try:
+        import yaml  # noqa: F401
+    except ImportError:
+        subprocess.run([sys.executable, "-m", "pip", "install", "PyYAML"], check=True)
+    subprocess.run([sys.executable, "-m", "pip", "install", "--no-deps", WHEEL_PATH], check=True)

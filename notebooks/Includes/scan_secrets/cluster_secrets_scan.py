@@ -101,6 +101,8 @@ db_client = SatDBClient(json_)
 # MAGIC # Skip on serverless: requests and pyyaml are pre-installed; outbound PyPI access is blocked.
 # MAGIC if [[ "$DATABRICKS_RUNTIME_VERSION" == client* ]]; then
 # MAGIC     echo "Serverless runtime detected - requests and pyyaml are pre-installed, skipping pip install"
+# MAGIC elif python -c "import requests, yaml" 2>/dev/null; then
+# MAGIC     echo "requests and pyyaml already available in the runtime, skipping pip install"
 # MAGIC else
 # MAGIC     pip install requests==2.32.3 PyYAML==6.0.2
 # MAGIC fi
@@ -108,6 +110,16 @@ db_client = SatDBClient(json_)
 # MAGIC # Install to a private path with an atomic move; retry on failure.
 # MAGIC TRUFFLEHOG_VERSION=v3.94.3
 # MAGIC THBIN=/tmp/trufflehog_cluster
+# MAGIC # Prefer the tarball shipped with the bundle (dabs/fetch_trufflehog.sh): no GitHub egress needed.
+# MAGIC case "$(uname -m)" in aarch64|arm64) tharch=arm64 ;; *) tharch=amd64 ;; esac
+# MAGIC bundled="/Workspace/Applications/SAT/files/lib/trufflehog/trufflehog_${TRUFFLEHOG_VERSION#v}_linux_${tharch}.tar.gz"
+# MAGIC if [ ! -x "$THBIN" ] && [ -f "$bundled" ]; then
+# MAGIC   thdir=$(mktemp -d)
+# MAGIC   if tar -xzf "$bundled" -C "$thdir" trufflehog && [ -x "$thdir/trufflehog" ]; then
+# MAGIC     mv -f "$thdir/trufflehog" "$THBIN"; echo "TruffleHog installed from bundled $bundled"
+# MAGIC   fi
+# MAGIC   rm -rf "$thdir"
+# MAGIC fi
 # MAGIC if [ ! -x "$THBIN" ]; then
 # MAGIC   for attempt in 1 2 3 4 5; do
 # MAGIC     thdir=$(mktemp -d)
